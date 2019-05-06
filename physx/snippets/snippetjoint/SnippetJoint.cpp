@@ -42,7 +42,6 @@
 #include "../snippetcommon/SnippetPVD.h"
 #include "../snippetutils/SnippetUtils.h"
 
-
 using namespace physx;
 
 PxDefaultAllocator		gAllocator;
@@ -60,6 +59,11 @@ PxPvd*                  gPvd        = NULL;
 
 PxReal chainZ = 10.0f;
 
+PxRigidDynamic* actor1 = NULL;
+PxRigidDynamic* actor2 = NULL;
+
+unsigned int count = 0;
+
 PxRigidDynamic* createDynamic(const PxTransform& t, const PxGeometry& geometry, const PxVec3& velocity=PxVec3(0))
 {
 	PxRigidDynamic* dynamic = PxCreateDynamic(*gPhysics, t, geometry, *gMaterial, 10.0f);
@@ -73,7 +77,7 @@ PxRigidDynamic* createDynamic(const PxTransform& t, const PxGeometry& geometry, 
 PxJoint* createLimitedSpherical(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a1, const PxTransform& t1)
 {
 	PxSphericalJoint* j = PxSphericalJointCreate(*gPhysics, a0, t0, a1, t1);
-	j->setLimitCone(PxJointLimitCone(PxPi/4, PxPi/4, 0.05f));
+	j->setLimitCone(PxJointLimitCone(PxPi/20, PxPi/20, 0.005f));
 	j->setSphericalJointFlag(PxSphericalJointFlag::eLIMIT_ENABLED, true);
 	return j;
 }
@@ -96,8 +100,8 @@ PxJoint* createDampedD6(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a
 	PxD6Joint* j = PxD6JointCreate(*gPhysics, a0, t0, a1, t1);
 	j->setMotion(PxD6Axis::eSWING1, PxD6Motion::eFREE);
 	j->setMotion(PxD6Axis::eSWING2, PxD6Motion::eFREE);
-	j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eFREE);
-	j->setDrive(PxD6Drive::eSLERP, PxD6JointDrive(0, 1000, FLT_MAX, true));
+	j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eFREE);    
+    j->setDrive(PxD6Drive::eSLERP, PxD6JointDrive(1000, 8000.00, FLT_MAX, true));
 	return j;
 }
 
@@ -107,7 +111,7 @@ typedef PxJoint* (*JointCreateFunction)(PxRigidActor* a0, const PxTransform& t0,
 
 void createChain(const PxTransform& t, PxU32 length, const PxGeometry& g, PxReal separation, JointCreateFunction createJoint)
 {
-	PxVec3 offset(separation/2, 0, 0);
+	PxVec3 offset(0, separation/2, 0);
 	PxTransform localTm(offset);
 	PxRigidDynamic* prev = NULL;
 
@@ -117,8 +121,18 @@ void createChain(const PxTransform& t, PxU32 length, const PxGeometry& g, PxReal
 		(*createJoint)(prev, prev ? PxTransform(offset) : t, current, PxTransform(-offset));
 		gScene->addActor(*current);
 		prev = current;
-		localTm.p.x += separation;
-	}
+		localTm.p.y += separation;
+
+        if (i == 4)
+        {
+            actor1 = current;
+        }
+        if (i == 11)
+        {
+            actor2 = current;
+        }
+	}    
+    (*createJoint)(prev, PxTransform(offset), NULL, t*PxTransform(PxVec3(0.0f, separation*length, 0.0f)));
 }
 
 void initPhysics(bool /*interactive*/)
@@ -151,14 +165,27 @@ void initPhysics(bool /*interactive*/)
 	PxRigidStatic* groundPlane = PxCreatePlane(*gPhysics, PxPlane(0,1,0,0), *gMaterial);
 	gScene->addActor(*groundPlane);
 
-	createChain(PxTransform(PxVec3(0.0f, 20.0f, 0.0f)), 5, PxBoxGeometry(2.0f, 0.5f, 0.5f), 4.0f, createLimitedSpherical);
-	createChain(PxTransform(PxVec3(0.0f, 20.0f, -10.0f)), 5, PxBoxGeometry(2.0f, 0.5f, 0.5f), 4.0f, createBreakableFixed);
-	createChain(PxTransform(PxVec3(0.0f, 20.0f, -20.0f)), 5, PxBoxGeometry(2.0f, 0.5f, 0.5f), 4.0f, createDampedD6);
+	//createChain(PxTransform(PxVec3(0.0f, 20.0f, 0.0f)), 15, PxBoxGeometry(2.0f, 0.15f, 0.15f), 4.0f, createLimitedSpherical);
+	//createChain(PxTransform(PxVec3(0.0f, 20.0f, -10.0f)), 15, PxBoxGeometry(2.0f, 0.5f, 0.5f), 4.0f, createBreakableFixed);
+	createChain(PxTransform(PxVec3(0.0f, 20.0f, -20.0f)), 15, PxBoxGeometry(1.5f, 1.8f, 1.5f), 4.0f, createDampedD6);
 }
 
 void stepPhysics(bool /*interactive*/)
 {
-	gScene->simulate(1.0f/60.0f);
+    // apply force
+    if (count > 30000 && count < 50000)
+    {
+        actor1->addForce(PxVec3(0.0f, 0.0f, -2.5e6f*(20000 - 50000 + count)/20000), PxForceMode::eFORCE, true);
+        actor2->addForce(PxVec3(0.0f, 0.0f, 2.5e6f*(20000 - 50000 + count) / 20000), PxForceMode::eFORCE, true);
+    }
+    count++;
+
+    if (count > 50000)
+    {
+        count = 0;
+    }
+
+	gScene->simulate(1.0f/400.0f);
 	gScene->fetchResults(true);
 }
 	
@@ -183,7 +210,9 @@ void keyPress(unsigned char key, const PxTransform& camera)
 {
 	switch(toupper(key))
 	{
-	case ' ':	createDynamic(camera, PxSphereGeometry(3.0f), camera.rotate(PxVec3(0,0,-1))*200);	break;
+	case ' ':	
+        createDynamic(camera, PxSphereGeometry(6.0f), camera.rotate(PxVec3(0,0,-1))*200);	
+        break;
 	}
 }
 

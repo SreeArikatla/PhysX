@@ -103,7 +103,7 @@ void initPhysics(bool /*interactive*/)
 
 void stepPhysics(bool /*interactive*/)
 {
-	gScene->simulate(1.0f/60.0f);
+	gScene->simulate(1.0f/1200.0f);
 	gScene->fetchResults(true);
 }
 	
