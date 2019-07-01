@@ -85,6 +85,11 @@ std::vector<std::string> TseriesFiles = { "T01M.obj", "T02M.obj", "T03M.obj", "T
 std::vector<std::string> CseriesFiles = { "C01M.obj", "C02M.obj", "C03M.obj", "C04M.obj", "C05M.obj",
 "C06M.obj", "C07M.obj" };
 
+// Spine angle limits
+std::vector<float> xLimit = { 10., 5., 7.5, 10., 10., 8., 4.5, 2., 2., 2., 2., 2., 2.5, 3., 3., 3., 4., 6., 6., 6., 7., 7., 8. };
+std::vector<float> yLimit = { 4., 10., 11., 11., 8., 7., 4., 5., 6., 5., 6., 6., 6., 6., 6., 6., 7., 9., 8., 6., 6., 8., 6.};
+std::vector<float> zLimit = { 0., 3., 6.5, 6.5, 6.5, 6., 2., 9., 8., 8., 8., 8., 7., 7., 6., 4., 2., 2., 2., 2., 2., 2., 2. };
+
 #define REPORT_INIT_ERROR_IFANY(OBJECT, CLBK, MESG) \
 if(!OBJECT) CLBK.reportError(physx::PxErrorCode::eINTERNAL_ERROR, MESG, __FILE__, __LINE__);
 
@@ -133,8 +138,6 @@ PxVec3 computeBoxHalfLengths(const std::vector<PxVec3>& vertices, const std::vec
     PxReal x = (vertices[1] - vertices[6]).magnitude()*0.5;
     PxReal y = (vertices[0] - vertices[1]).magnitude()*0.5;
     PxReal z = (vertices[1] - vertices[3]).magnitude()*0.5;
-
-    //std::cout << x << "\t" << y << "\t" << z << std::endl;
 
     return PxVec3(x, y, z);
 }
@@ -306,8 +309,29 @@ PxJoint* createDampedD6(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a
     j->setMotion(PxD6Axis::eSWING2, PxD6Motion::eLIMITED);
     j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eLIMITED);
     j->setDrive(PxD6Drive::eSLERP, PxD6JointDrive(0, 1000, FLT_MAX, true));
-    //j->setTwistLimit(PxJointAngularLimitPair(-0.015, 0.015));
-    j->setSwingLimit(PxJointLimitCone(-0.19, 0.19));
+    
+    //j->setTwistLimit(PxJointAngularLimitPair(-0.15, 0.15));
+    
+    j->setSwingLimit(PxJointLimitCone(0.19, 0.19));
+    return j;
+}
+
+// D6 joint with a spring maintaining its position
+// angle limits are in degrees
+PxJoint* createDampedD6(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a1, 
+    const PxTransform& t1, const float limX, const float limY, const float limZ)
+{
+    PxD6Joint* j = PxD6JointCreate(*gPhysics, a0, t0, a1, t1);
+    j->setMotion(PxD6Axis::eSWING1, PxD6Motion::eLIMITED);
+    j->setMotion(PxD6Axis::eSWING2, PxD6Motion::eLIMITED);
+    j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eLIMITED);
+    j->setDrive(PxD6Drive::eSLERP, PxD6JointDrive(0, 1000, FLT_MAX, true));
+
+    // set angular limits
+    const float degToRad = 22. / 7. / 180.;    
+    j->setTwistLimit(PxJointAngularLimitPair(-limZ, limZ));
+    j->setSwingLimit(PxJointLimitCone(degToRad*limX, degToRad*limY));
+    
     return j;
 }
 
@@ -440,15 +464,15 @@ void createRealSpineModel(const PxU32 length, PxTransform& offset)
     for (PxU32 i = 0; i < length - 1; ++i)
     {
         const PxReal zOffset = (vertibraCenters[i + 1] - vertibraCenters[i]).magnitude()*0.5;
-        createDampedD6(vertibrae[i], PxTransform(PxVec3(0., 0., -zOffset)), vertibrae[i + 1], PxTransform(PxVec3(0., 0., zOffset)));
+        createDampedD6(vertibrae[i], PxTransform(PxVec3(0., 0., -zOffset)), vertibrae[i + 1], PxTransform(PxVec3(0., 0., zOffset)), xLimit[i], yLimit[i], zLimit[i]);
     }
 
-    // create end joints
+    // create end joints (with angular limits of the nearest joint)
     const PxReal zOffset = (vertibraCenters[1] - vertibraCenters[0]).magnitude()*0.5;
-    createDampedD6(NULL, vertibraeTransforms[0] * PxTransform(PxVec3(0., 0., 0)), vertibrae[0], PxTransform(PxVec3(0., 0., -0)));
+    createDampedD6(NULL, vertibraeTransforms[0] * PxTransform(PxVec3(0., 0., 0)), vertibrae[0], PxTransform(PxVec3(0., 0., -0)), xLimit[0], yLimit[0], zLimit[0]);
     
     const PxReal zOffset2 = (vertibraCenters[length-1] - vertibraCenters[length-2]).magnitude()*0.5;
-    createDampedD6(vertibrae[length - 1], PxTransform(PxVec3(0., 0., 0)), NULL, vertibraeTransforms[length-1] * PxTransform(PxVec3(0., 0., -0)));
+    createDampedD6(vertibrae[length - 1], PxTransform(PxVec3(0., 0., 0)), NULL, vertibraeTransforms[length-1] * PxTransform(PxVec3(0., 0., -0)), xLimit[length - 2], yLimit[length - 2], zLimit[length - 2]);
 }
 
 // create a spine model with custom D6 links between the vertebrae
@@ -617,8 +641,9 @@ void stepPhysics(bool /*interactive*/)
     {
         if (frameCount > 60000 && frameCount < 90000)
         {
-            actor1->addForce(PxVec3(-1.0e2f, 0.0f, 0.0f), PxForceMode::eFORCE, true);
-        }
+            actor1->addForce(PxVec3(-1.2e2f, 0.0f, 0.0f), PxForceMode::eFORCE, true);
+            //PxRigidBodyExt::addForceAtPos(*actor1, PxVec3(1.2e2f, 0.0f, 0.0f), PxVec3(0., 0., 0.));
+        }        
         frameCount++;
     }
 
