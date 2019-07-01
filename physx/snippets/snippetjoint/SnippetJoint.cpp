@@ -75,6 +75,15 @@ bool paused = true;
 
 unsigned int count = 0;
 
+std::vector<std::string> LseriesFiles = { "L01M.obj", "L02M.obj", "L03M.obj", "L04M.obj", "L05M.obj" };
+
+std::vector<std::string> TseriesFiles = { "T01M.obj", "T02M.obj", "T03M.obj", "T04M.obj", "T05M.obj",
+"T06M.obj", "T07M.obj", "T08M.obj", "T09M.obj","T10M.obj" ,
+"T11M.obj", "T12M.obj" };
+
+std::vector<std::string> CseriesFiles = { "C01M.obj", "C02M.obj", "C03M.obj", "C04M.obj", "C05M.obj",
+"C06M.obj", "C07M.obj" };
+
 #define REPORT_INIT_ERROR_IFANY(OBJECT, CLBK, MESG) \
 if(!OBJECT) CLBK.reportError(physx::PxErrorCode::eINTERNAL_ERROR, MESG, __FILE__, __LINE__);
 
@@ -124,7 +133,7 @@ PxVec3 computeBoxHalfLengths(const std::vector<PxVec3>& vertices, const std::vec
     PxReal y = (vertices[0] - vertices[1]).magnitude()*0.5;
     PxReal z = (vertices[1] - vertices[3]).magnitude()*0.5;
 
-    std::cout << x << "\t" << y << "\t" << z << std::endl;
+    //std::cout << x << "\t" << y << "\t" << z << std::endl;
 
     return PxVec3(x, y, z);
 }
@@ -365,21 +374,42 @@ void createRealSpineModel(const PxU32 length, PxTransform& offset)
     std::vector<PxVec3> vertibraCenters(length, PxVec3(0., 0., 0.));
     std::vector<PxRigidActor*> vertibrae;
 
+    std::vector<std::string> vertibraeName;
+    if (length == 12)
+    {
+        vertibraeName.insert(vertibraeName.begin(), TseriesFiles.begin(), TseriesFiles.end());
+    }    
+    else if (length == 17)
+    {
+        vertibraeName.insert(vertibraeName.begin(), TseriesFiles.begin(), TseriesFiles.end());
+        vertibraeName.insert(vertibraeName.end(), LseriesFiles.begin(), LseriesFiles.end());
+    }
+    else if (length == 24)
+    {
+        vertibraeName.insert(vertibraeName.begin(), CseriesFiles.begin(), CseriesFiles.end());
+        vertibraeName.insert(vertibraeName.end(), TseriesFiles.begin(), TseriesFiles.end());
+        vertibraeName.insert(vertibraeName.end(), LseriesFiles.begin(), LseriesFiles.end());
+    }
+    else
+    {
+        std::cout << "Supply right number of vertibrae";
+        exit(1);
+    }
+
     // Create vertibrae
-    for (PxU32 i = 0; i < length; ++i)
+    for (PxU32 i = 0; i < vertibraeName.size(); ++i)
     {
         std::vector<PxVec3> vertices;
         std::vector <PxU32> indices;
 
-        const auto number = i < (PxU32)9 ? std::string("0") + std::to_string(i+1) : std::to_string(i+1);        
-        loadObjFile(std::string("objs/T" + number + "M.obj"), vertices, indices);
-
+        loadObjFile(std::string("objs/" + vertibraeName[i]), vertices, indices); 
+            
         vertibraeTransforms.push_back(offset*computeTransformOfBox(vertices, indices));
         auto boxGeo = PxBoxGeometry(computeBoxHalfLengths(vertices, indices));
 
         PxRigidDynamic* dynaObj = PxCreateDynamic(*gPhysics, vertibraeTransforms[i], boxGeo, *gMaterial, 1.0f);
 
-        if (i == 6)
+        if (i == 10)
         {
             actor1 = dynaObj;
         }
@@ -387,10 +417,6 @@ void createRealSpineModel(const PxU32 length, PxTransform& offset)
         /*addMeshShapeToActor(dynaObj, std::string("objs/T" + number + "L.obj").c_str(), offset);
         addMeshShapeToActor(dynaObj, std::string("objs/T" + number + "M.obj").c_str(), offset);
         addMeshShapeToActor(dynaObj, std::string("objs/T" + number + "R.obj").c_str(), offset);*/
-
-        std::cout << std::string("objs/T" + number + "L.obj") << std::endl;
-        std::cout << std::string("objs/T" + number + "M.obj") << std::endl;
-        std::cout << std::string("objs/T" + number + "R.obj") << std::endl;
         
         dynaObj->setMass(0.2);
         dynaObj->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, true);
@@ -421,12 +447,18 @@ void createRealSpineModel(const PxU32 length, PxTransform& offset)
     //const PxReal zOffset2 = (vertibraCenters[length-2] - vertibraCenters[length-1]).magnitude()*0.5;
     //createBreakableFixed(vertibrae[length - 1], PxTransform(PxVec3(0., 0., 0)), NULL, vertibraeTransforms[length - 1]* PxTransform(PxVec3(0., 0., 0)));            
 
-    // local frame
+    /*for (PxU32 i = 0; i < length; ++i)
+    {
+        std::cout << vertibraCenters[i].x << ", " << vertibraCenters[i].y << ", " << vertibraCenters[i].z << std::endl;
+    }*/
+
+    // Create joints in local frame
     for (PxU32 i = 0; i < length - 1; ++i)
     {
         const PxReal zOffset = (vertibraCenters[i + 1] - vertibraCenters[i]).magnitude()*0.5;
         createDampedD6(vertibrae[i], PxTransform(PxVec3(0., 0., -zOffset)), vertibrae[i + 1], PxTransform(PxVec3(0., 0., zOffset)));
     }
+
     // create end joints
     const PxReal zOffset = (vertibraCenters[1] - vertibraCenters[0]).magnitude()*0.5;
     createDampedD6(NULL, vertibraeTransforms[0] * PxTransform(PxVec3(0., 0., 0)), vertibrae[0], PxTransform(PxVec3(0., 0., -0)));
@@ -562,9 +594,9 @@ void initPhysics(bool /*interactive*/)
 
     //createChain(PxTransform(PxVec3(0.0f, 20.0f, -10.0f)), 15, PxBoxGeometry(2.0f, 0.15f, 0.15f), 4.0f, createBreakableFixed);
     //createChain(PxTransform(PxVec3(0.0f, 20.0f, -20.0f)), 15, PxBoxGeometry(2.0f, 0.15f, 0.15f), 4.0f, createDampedD6);
-    auto s = PxTransform(PxQuat(3.14 / 4, PxVec3(1., 0., 0.)));
+    //auto s = PxTransform(PxQuat(3.14 / 4, PxVec3(1., 0., 0.)));
     
-    createRealSpineModel(12, PxTransform(PxVec3(0.0f, 40.0f, 0.0f)));
+    createRealSpineModel(24, PxTransform(PxVec3(0.0f, 40.0f, 0.0f)));    
     //createSpineModel(s, 15, PxBoxGeometry(1.5f, 1.8f, 1.5f), 4.0f, createSpineJointD6);//PxTransform(PxVec3(0.0f, 20.0f, -20.0f))
     //createRigidDynamicMeshActor("./asianDragon.obj", PxTransform(PxVec3(10, 10, 10)), 5.0);
     //createRigidDynamicMeshActor("objs/T01L.obj", PxTransform(PxIdentity));
@@ -598,14 +630,19 @@ void stepPhysics(bool /*interactive*/)
 
     if (actor1)
     {
-        if (count > 60000)
+        if (count > 40000 && count < 70000)
         {
-            actor1->addForce(PxVec3(-1.0e3f, 0.0f, 0.0f), PxForceMode::eFORCE, true);
+            actor1->addForce(PxVec3(-1.0e2f, 0.0f, 0.0f), PxForceMode::eFORCE, true);
         }
-        if(count <= 60000)
+        else
         {
-            count++;
+            actor1->addForce(PxVec3(1.0e2f, 0.0f, 0.0f), PxForceMode::eFORCE, true);
         }
+        count++;
+        /*if(count > 70000)
+        {
+            count = 0;
+        }*/
     }
 
     if (gRigidStaticMeshActor)

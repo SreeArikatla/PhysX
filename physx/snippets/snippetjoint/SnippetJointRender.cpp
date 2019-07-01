@@ -100,7 +100,7 @@ void exitCallback(void)
 
 void renderLoop()
 {
-	sCamera = new Snippets::Camera(PxVec3(50.0f, 50.0f, 50.0f), PxVec3(-0.6f,-0.2f,-0.7f));
+	sCamera = new Snippets::Camera(PxVec3(90.0f, 90.0f, 90.0f), PxVec3(-0.6f,-0.2f,-0.7f));
 
 	Snippets::setupDefaultWindow("PhysX Snippet Joint");
 	Snippets::setupDefaultRenderState();
