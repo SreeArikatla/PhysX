@@ -70,7 +70,8 @@ PxRigidDynamic* actor2 = NULL;
 PxCooking*				gCooking = NULL;
 
 PxRigidDynamic* gRigidDynaMeshActor;
-PxRigidStatic* gRigidStaticMeshActor;
+PxRigidStatic* gRigidStaticMeshActor;// Marion
+PxRigidStatic* gRigidStaticMeshActor2;// Marion
 
 bool paused = true;
 
@@ -301,6 +302,37 @@ PxJoint* createBreakableFixed(PxRigidActor* a0, const PxTransform& t0, PxRigidAc
 	return j;
 }
 
+//-----------------------------------------------------------------------
+
+// spherical joint limited to an angle of at most pi/4 radians (45 degrees)
+PxJoint* createLimitedSphericalMarion(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a1, const PxTransform& t1)
+{
+    PxSphericalJoint* j = PxSphericalJointCreate(*gPhysics, a0, t0, a1, t1);
+    j->setLimitCone(PxJointLimitCone(PxPi / 20, PxPi / 20, 0.05f));
+    j->setSphericalJointFlag(PxSphericalJointFlag::eLIMIT_ENABLED, true);
+    return j;
+}
+
+// D6 joint with a spring maintaining its position
+// Marion
+PxJoint* createDampedD6Marion(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a1, const PxTransform& t1)
+{
+    PxD6Joint* j = PxD6JointCreate(*gPhysics, a0, t0, a1, t1);
+    j->setMotion(PxD6Axis::eSWING1, PxD6Motion::eLIMITED);
+    j->setMotion(PxD6Axis::eSWING2, PxD6Motion::eLIMITED);
+    j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eLIMITED);
+
+    j->setDrive(PxD6Drive::eSLERP, PxD6JointDrive(10000, 80000*10, FLT_MAX, true));
+
+    j->setTwistLimit(PxJointAngularLimitPair(-0.015, 0.015));
+
+    j->setSwingLimit(PxJointLimitCone(0.095, 0.095));
+    //j->setSwingLimit(PxJointLimitCone(0.075, 0.075));
+    return j;
+}
+
+//-----------------------------------------------------------------------
+
 // D6 joint with a spring maintaining its position
 PxJoint* createDampedD6(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a1, const PxTransform& t1)
 {
@@ -371,6 +403,7 @@ void createChain(const PxTransform& t, PxU32 length, const PxGeometry& g, PxReal
     for (PxU32 i = 0; i < length; i++)
     {
         PxRigidDynamic* current = PxCreateDynamic(*gPhysics, t*localTm, g, *gMaterial, 1.0f);
+        current->setSolverIterationCounts(10, 10);
         (*createJoint)(prev, prev ? PxTransform(offset) : t, current, PxTransform(-offset));
         gScene->addActor(*current);
         prev = current;
@@ -502,6 +535,34 @@ void createSpineModel(const PxTransform& t, PxU32 length, const PxGeometry& g, P
     (*createJoint)(prev, PxTransform(offset), NULL, t*PxTransform(PxVec3(0.0f, separation*length, 0.0f)));
 }
 
+void createRigidStaticBoxActorMarion2(const PxTransform& t = PxTransform(PxIdentity), const PxReal scale = 1., const bool disableSim = true)
+{
+    gRigidStaticMeshActor2 = gPhysics->createRigidStatic(t);
+    PxShape* customShape2 = PxRigidActorExt::createExclusiveShape(*gRigidStaticMeshActor2,
+        PxBoxGeometry(scale*0.5*1.5, scale*0.5, scale*0.5), *gMaterial, PxShapeFlag::eSIMULATION_SHAPE);
+
+    if (disableSim)
+    {
+        gRigidStaticMeshActor2->setActorFlag(PxActorFlag::eDISABLE_SIMULATION, true);
+    }
+
+    gScene->addActor(*gRigidStaticMeshActor2);
+}
+
+void createRigidStaticBoxActorMarion(const PxTransform& t = PxTransform(PxIdentity), const PxReal scale = 1., const bool disableSim = true)
+{
+    gRigidStaticMeshActor = gPhysics->createRigidStatic(t);
+    PxShape* customShape2 = PxRigidActorExt::createExclusiveShape(*gRigidStaticMeshActor,
+        PxBoxGeometry(scale*0.5*1.5, scale*0.5, scale*0.5), *gMaterial, PxShapeFlag::eSIMULATION_SHAPE);
+
+    if (disableSim)
+    {
+        gRigidStaticMeshActor->setActorFlag(PxActorFlag::eDISABLE_SIMULATION, true);
+    }
+
+    gScene->addActor(*gRigidStaticMeshActor);
+}
+
 void createRigidStaticMeshActor(const char* filename, const PxTransform& t = PxTransform(PxIdentity), const PxReal scale = 1., const bool disableSim = true)
 {
     // Test mesh loading, cooking and custom actor
@@ -578,6 +639,7 @@ void initPhysics(bool /*interactive*/)
 
 	PxSceneDesc sceneDesc(gPhysics->getTolerancesScale());
     sceneDesc.gravity = PxVec3(0.0f, -9.81f, 0.0f);// PxVec3(0.0f, -9.81f, 0.0f);
+    sceneDesc.solverType = PxSolverType::eTGS;
 	gDispatcher = PxDefaultCpuDispatcherCreate(2);
 	sceneDesc.cpuDispatcher	= gDispatcher;
 	sceneDesc.filterShader	= PxDefaultSimulationFilterShader;
@@ -592,19 +654,28 @@ void initPhysics(bool /*interactive*/)
         pvdClient->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_SCENEQUERIES, true);
 	}
 
-	gMaterial = gPhysics->createMaterial(0.5f, 0.5f, 0.6f);
+	//gMaterial = gPhysics->createMaterial(0.5f, 0.5f, 0.6f);
+    gMaterial = gPhysics->createMaterial(0.2f, 0.3f, 0.1f); // 0.4, 0.4 for box
 
 	PxRigidStatic* groundPlane = PxCreatePlane(*gPhysics, PxPlane(0,1,0,0), *gMaterial);
-	gScene->addActor(*groundPlane);
+    gScene->addActor(*groundPlane); 
+    //gScene->setVisualizationParameter(PxVisualizationParameter::eJOINT_LIMITS, 1.0f);
 
-	//createChain(PxTransform(PxVec3(0.0f, 20.0f, 0.0f)), 15, PxBoxGeometry(2.0f, 0.15f, 0.15f), 4.0f, createLimitedSpherical);
+    // Marion surgical
+    createRigidStaticBoxActorMarion(PxTransform(PxVec3(30, 15, 30)), 30.0, false);
+    createRigidStaticBoxActorMarion2(PxTransform(PxVec3(90, 15, -30)), 30.0, false);
+
+    const float linkLength = 1.5;
+    createChain(PxTransform(PxVec3(0.0f, 40.0f, 0.0f)), 65, PxBoxGeometry(linkLength, 0.35f, 0.35f), 2 * linkLength, createDampedD6Marion);
+    //createChain(PxTransform(PxVec3(0.0f, 40.0f, 0.0f)), 55, PxCapsuleGeometry(0.35, linkLength), 2 * linkLength, createDampedD6Marion);
+
     //createRigidStaticMeshActor("./bowl.obj", PxTransform(PxVec3(10, -20, -25)), 5.0, false);
 
     //createChain(PxTransform(PxVec3(0.0f, 20.0f, -10.0f)), 15, PxBoxGeometry(2.0f, 0.15f, 0.15f), 4.0f, createBreakableFixed);
     //createChain(PxTransform(PxVec3(0.0f, 20.0f, -20.0f)), 15, PxBoxGeometry(2.0f, 0.15f, 0.15f), 4.0f, createDampedD6);
     //auto s = PxTransform(PxQuat(3.14 / 4, PxVec3(1., 0., 0.)));
     
-    createRealSpineModel(24, PxTransform(PxVec3(0.0f, 40.0f, 0.0f)));    
+    //createRealSpineModel(24, PxTransform(PxVec3(0.0f, 40.0f, 0.0f)));    
     //createRigidStaticMeshActor("objs/Sacrum.obj", PxTransform(PxVec3(0.0f, 40.0f, 0.0f)), 1.0, false);
     //createSpineModel(s, 15, PxBoxGeometry(1.5f, 1.8f, 1.5f), 4.0f, createSpineJointD6);//PxTransform(PxVec3(0.0f, 20.0f, -20.0f))
     //createRigidDynamicMeshActor("./asianDragon.obj", PxTransform(PxVec3(10, 10, 10)), 5.0);
@@ -647,15 +718,19 @@ void stepPhysics(bool /*interactive*/)
         frameCount++;
     }
 
-    /*if (gRigidStaticMeshActor)
+    // Marion
+    if (gRigidStaticMeshActor && !paused)
     {
         transferGlobalPose(gRigidDynaMeshActor, gRigidStaticMeshActor, PxTransform(PxVec3(20, 0, 20)));
-        gRigidStaticMeshActor->setGlobalPose(PxTransform(PxVec3(0.002, 0.0002, -0.002))*gRigidStaticMeshActor->getGlobalPose());
-    }*/
+        gRigidStaticMeshActor->setGlobalPose(PxTransform(PxVec3(0, 0, -0.004))*gRigidStaticMeshActor->getGlobalPose());
+
+        transferGlobalPose(gRigidDynaMeshActor, gRigidStaticMeshActor2, PxTransform(PxVec3(20, 0, 20)));
+        gRigidStaticMeshActor2->setGlobalPose(PxTransform(PxVec3(0, 0, 0.004))*gRigidStaticMeshActor2->getGlobalPose());
+    }
 
     if (!paused)
     {
-        gScene->simulate(1.0f / 400.0f);
+        gScene->simulate(1.0f / 200.0f);
         gScene->fetchResults(true);
         //paused = !paused;
     }

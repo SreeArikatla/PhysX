@@ -337,8 +337,8 @@ void renderActors(PxRigidActor** actors, const PxU32 numActors, bool shadows, co
 			}
 			else*/
 				glColor4f(color.x, color.y, color.z, 1.0f);
-                
-                if (i == 0)
+
+                /*if (i == 0)
                 {
                     glColor4f(0.8, 0.8, 0.8, 1.0f);
                 }
@@ -353,6 +353,15 @@ void renderActors(PxRigidActor** actors, const PxU32 numActors, bool shadows, co
                 else
                 {
                     glColor4f(57. / 255, 106. / 255, 177. / 255, 1.0f);
+                }*/
+
+                if (i <= 2)
+                {
+                    glColor4f(0.85, 0.85, 0.85, 1.0f);
+                }
+                else
+                {
+                    glColor4f(199. / 255, 199. / 255, 20. / 255, 1.0f);
                 }
                 
 			renderGeometryHolder(h);
