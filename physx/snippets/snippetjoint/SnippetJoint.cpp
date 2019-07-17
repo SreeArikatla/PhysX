@@ -39,8 +39,8 @@
 #include <limits>
 #include <algorithm>
 
+// PhysX includes
 #include "PxPhysicsAPI.h"
-
 #include "../snippetcommon/SnippetPrint.h"
 #include "../snippetcommon/SnippetPVD.h"
 #include "../snippetutils/SnippetUtils.h"
@@ -51,7 +51,7 @@
 
 using namespace physx;
 
-// PhysX
+// PhysX var
 PxDefaultAllocator		gAllocator;
 PxDefaultErrorCallback	gErrorCallback;
 PxFoundation*			gFoundation = NULL;
@@ -87,9 +87,22 @@ struct vertebraeForce
 std::vector<vertebraeForce> vertebraeForces; ///>  All the external forces to be applied is stored here
 
 // user parameters
-float convergenceTol = 0.5e-3; ///> Tolerance against which the convergence of the spine pose will be checked
-float timeStepSize = 1. / 400; ///> Time step used for the simulation
+float convergenceTol = 0.5e-3;              ///> Tolerance against which the convergence of the spine pose will be checked
+float timeStepSize = 1. / 400;              ///> Time step used for the simulation
 
+///
+/// \brief Keep track of the simulation state
+///
+enum spineSimulationState
+{
+    preInitialization=0,
+    movingToDefaultPose,
+    convergedToDefaultPose,
+    movingToTargetPose,
+    ConvergedToTargetPose
+};
+
+spineSimulationState simState = spineSimulationState::preInitialization; ///> Track the simualtion state
 
 /// Store the name of the external files of simplistic vertebrae models registered to the 3D spine
 std::vector<std::string> LseriesFiles = { "L01M.obj", "L02M.obj", "L03M.obj", "L04M.obj", "L05M.obj" };
@@ -109,8 +122,8 @@ std::vector<float> zAngularLimits = { 0., 3., 6.5, 6.5, 6.5, 6., 2., 9., 8., 8.,
 // forward deceleration
 void addForceOnVertebrae(const unsigned int vertebraeNum, const PxVec3& force, const PxVec3& pos);
 void addForceOnVertebrae(const unsigned int vertebraeNum,
-    const float fX, const float fY, const float fZ,
-    const float pX, const float pY, const float pZ);
+                         const float fX, const float fY, const float fZ,
+                         const float pX, const float pY, const float pZ);
 void removeForcesOnVertebrae(const unsigned int vertebraeNum);
 
 #define REPORT_INIT_ERROR_IFANY(OBJECT, CLBK, MESG) \
@@ -474,22 +487,41 @@ void applyForces()
 }
 
 ///
+/// \brief Returns the simulation state
+///
+spineSimulationState getSimulationState()
+{
+    return simState;
+}
+
+///
 /// \brief Step one physics frame
 ///
 void stepPhysics(bool /*interactive*/)
 {
+    if (firstIteration)
+    {
+        simState = spineSimulationState::movingToDefaultPose;
+    }
+
     if (!paused)
     {
         if (frameCount > 2000)
-        {            
+        {        
             applyForces();
         }        
         frameCount++;
     }
 
+    if (frameCount > 3000 && simState == spineSimulationState::movingToDefaultPose)
+    {
+        simState = spineSimulationState::movingToTargetPose;
+    }
+
     if (frameCount > 3000 && !firstIteration && !paused && poseConverged())
     {
         paused = true;
+        simState = spineSimulationState::ConvergedToTargetPose;
         printf("Converged!\n");
     }
 
@@ -539,11 +571,12 @@ int snippetMain(int, const char*const*)
 #ifdef RENDER_SNIPPET
 	extern void renderLoop();
 	renderLoop();
-#else
-	static const PxU32 frameNum = 100;
+#else	
 	initPhysics(false);
-	for(PxU32 i=0; i< frameNum; i++)
-		stepPhysics(false);
+    while (1)
+    {
+        stepPhysics(false);
+    }		
 	cleanupPhysics(false);
 #endif
 
