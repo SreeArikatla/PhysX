@@ -27,7 +27,7 @@
 // Copyright (c) 2004-2008 AGEIA Technologies, Inc. All rights reserved.
 // Copyright (c) 2001-2004 NovodeX AG. All rights reserved.  
 
-#ifdef RENDER_SNIPPET
+#ifdef RENDER_SNIPPET__
 
 #include <vector>
 
@@ -47,6 +47,7 @@ extern void keyPress(unsigned char key, const PxTransform& camera);
 namespace
 {
 Snippets::Camera*	sCamera;
+extern class spineSimulator;
 
 void motionCallback(int x, int y)
 {
@@ -99,7 +100,7 @@ void exitCallback(void)
 }
 
 void renderLoop()
-{
+{    
 	sCamera = new Snippets::Camera(PxVec3(90.0f, 90.0f, 90.0f), PxVec3(-0.6f,-0.2f,-0.7f));
 
 	Snippets::setupDefaultWindow("PhysX Snippet Joint");

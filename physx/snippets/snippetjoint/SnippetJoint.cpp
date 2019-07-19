@@ -33,11 +33,14 @@
 // It creates a chain of objects joined by limited spherical joints, a chain
 // joined by fixed joints which is breakable, and a chain of damped D6 joints
 // ****************************************************************************
+#define RENDER_SPINE
 
 #include <ctype.h>
 #include <iostream>
 #include <limits>
 #include <algorithm>
+#include <iostream>
+#include <fstream>
 
 // PhysX includes
 #include "PxPhysicsAPI.h"
@@ -46,29 +49,20 @@
 #include "../snippetutils/SnippetUtils.h"
 #include "../../include/extensions/PxRigidBodyExt.h"
 
+#ifdef RENDER_SPINE
+#include "../snippetrender/SnippetRender.h"
+#include "../snippetrender/SnippetCamera.h"
+#endif
+
 #define TINYOBJLOADER_IMPLEMENTATION // define this in only *one* .cc
 #include "tiny_obj_loader.h"
 
+#define REPORT_INIT_ERROR_IFANY(OBJECT, CLBK, MESG) \
+if(!OBJECT) CLBK.reportError(physx::PxErrorCode::eINTERNAL_ERROR, MESG, __FILE__, __LINE__);
+
 using namespace physx;
 
-// PhysX var
-PxDefaultAllocator		gAllocator;
-PxDefaultErrorCallback	gErrorCallback;
-PxFoundation*			gFoundation = NULL;
-PxPhysics*				gPhysics	= NULL;
-PxDefaultCpuDispatcher*	gDispatcher = NULL;
-PxScene*				gScene		= NULL;
-PxMaterial*				gMaterial	= NULL;
-PxPvd*                  gPvd        = NULL;
-PxCooking*				gCooking = NULL;
-
-bool paused = false;                        ///> Tracks if the simulation is paused or not
-bool firstIteration = true;                 ///> True if before the first simulation iteration
-bool includeGroundPlane = true;             ///> Include non-functional ground plane or not
-unsigned int frameCount = 0;                ///> Stores the simulation frame number
-std::vector<PxRigidDynamic*> vertebrae;     ///> Vector of all the dynamic actors created for vertebrae
-float poseDataPrev[168];                    ///> Stores the pose of the spine from last simulation frame
-float poseDataCurrent[168];                 ///> Stores the pose of the spine in current simulation frame
+const char* const spinePoseFilename = "spinePose.txt";
 
 ///
 /// \brief data structure to hold the force specification
@@ -84,25 +78,84 @@ struct vertebraeForce
     vertebraeForce(const PxU32 num, const PxVec3 f, const PxVec3 p) :
         vertebraeNumber(num), force(f), position(p) {}
 };
-std::vector<vertebraeForce> vertebraeForces; ///>  All the external forces to be applied is stored here
-
-// user parameters
-float convergenceTol = 0.5e-3;              ///> Tolerance against which the convergence of the spine pose will be checked
-float timeStepSize = 1. / 400;              ///> Time step used for the simulation
 
 ///
 /// \brief Keep track of the simulation state
 ///
 enum spineSimulationState
 {
-    preInitialization=0,
+    preInitialization = 0,
     movingToDefaultPose,
     convergedToDefaultPose,
     movingToTargetPose,
     ConvergedToTargetPose
 };
 
-spineSimulationState simState = spineSimulationState::preInitialization; ///> Track the simualtion state
+class spineSimulator
+{
+
+public:
+    spineSimulator();
+    ~spineSimulator();
+
+    void addForceOnVertebrae(const unsigned int vertebraeNum, const PxVec3& force, const PxVec3& pos);
+    void addForceOnVertebrae(const unsigned int vertebraeNum,
+                             const float fX, const float fY, const float fZ,
+                             const float pX, const float pY, const float pZ);
+    void removeForcesOnVertebrae(const unsigned int vertebraeNum);
+    void createRealSpineModel(PxTransform& offset);
+    void getSpinePose(float* poseData);
+    void setTimeStepSize(const float timeStep);
+    bool poseConverged();
+    void clearAllForces();    
+    void stepPhysics();
+    void writeSpinePose(const char* filename); 
+    bool isPaused() const { return paused; };
+    void setPause(const bool val) { paused = val; }
+    unsigned int getFrameNum() const { return frameCount; };
+    spineSimulationState getSimulationState();
+
+protected:
+    void applyForces();
+    void loadObjFile(const std::string &filename, std::vector<PxVec3>& vertices, std::vector <PxU32>& indices);
+    PxVec3 computeBoxHalfLengths(const std::vector<PxVec3>& vertices);
+    PxTransform computeTransformOfBox(const std::vector<PxVec3>& vertices,
+                                        const std::vector <PxU32>& indices,
+                                        const bool includeTranslaton = true);
+    PxRigidDynamic* createDynamic(const PxTransform& t, const PxGeometry& geometry, const PxVec3& velocity = PxVec3(0));
+    PxJoint* createDampedD6(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a1,
+                            const PxTransform& t1, const float limX, const float limY, const float limZ);
+
+private:
+    // PhysX var
+    PxDefaultAllocator		gAllocator;
+    PxDefaultErrorCallback	gErrorCallback;
+    PxFoundation*			gFoundation = NULL;
+    PxPhysics*				gPhysics = NULL;
+    PxDefaultCpuDispatcher*	gDispatcher = NULL;
+    PxScene*				gScene = NULL;
+    PxMaterial*				gMaterial = NULL;
+    PxPvd*                  gPvd = NULL;
+    PxCooking*				gCooking = NULL;
+
+protected:
+    spineSimulationState simState = spineSimulationState::preInitialization; ///> Track the simualtion state
+
+    bool paused = false;                        ///> Tracks if the simulation is paused or not
+    bool firstIteration = true;                 ///> True if before the first simulation iteration
+    bool includeGroundPlane = true;             ///> Include non-functional ground plane or not
+    unsigned int frameCount = 0;                ///> Stores the simulation frame number
+    std::vector<PxRigidDynamic*> vertebrae;     ///> Vector of all the dynamic actors created for vertebrae
+    float poseDataPrev[168];                    ///> Stores the pose of the spine from last simulation frame
+    float poseDataCurrent[168];                 ///> Stores the pose of the spine in current simulation frame
+    float poseDataInitial[168];                 ///> Stores the initial pose of the spine
+
+    std::vector<vertebraeForce> vertebraeForces; ///>  All the external forces to be applied is stored here
+
+    // user parameters
+    float convergenceTol = 0.5e-3;              ///> Tolerance against which the convergence of the spine pose will be checked
+    float timeStepSize = 1. / 400;              ///> Time step used for the simulation
+};
 
 /// Store the name of the external files of simplistic vertebrae models registered to the 3D spine
 std::vector<std::string> LseriesFiles = { "L01M.obj", "L02M.obj", "L03M.obj", "L04M.obj", "L05M.obj" };
@@ -119,20 +172,43 @@ std::vector<float> xAngularLimits = { 10., 5., 7.5, 10., 10., 8., 4.5, 2., 2., 2
 std::vector<float> yAngularLimits = { 4., 10., 11., 11., 8., 7., 4., 5., 6., 5., 6., 6., 6., 6., 6., 6., 7., 9., 8., 6., 6., 8., 6.};
 std::vector<float> zAngularLimits = { 0., 3., 6.5, 6.5, 6.5, 6., 2., 9., 8., 8., 8., 8., 7., 7., 6., 4., 2., 2., 2., 2., 2., 2., 2. };
 
-// forward deceleration
-void addForceOnVertebrae(const unsigned int vertebraeNum, const PxVec3& force, const PxVec3& pos);
-void addForceOnVertebrae(const unsigned int vertebraeNum,
-                         const float fX, const float fY, const float fZ,
-                         const float pX, const float pY, const float pZ);
-void removeForcesOnVertebrae(const unsigned int vertebraeNum);
+#ifdef RENDER_SPINE
+    spineSimulator* spine;
+#endif
 
-#define REPORT_INIT_ERROR_IFANY(OBJECT, CLBK, MESG) \
-if(!OBJECT) CLBK.reportError(physx::PxErrorCode::eINTERNAL_ERROR, MESG, __FILE__, __LINE__);
+void spineSimulator::writeSpinePose(const char* filename)
+{
+    std::ofstream poseFile(filename);
+    if (poseFile.is_open())
+    {
+        // Write initial pose (before the forces are applied)
+        poseFile << "Initial pose:\n";
+        for (int i = 0; i < 168; ++i)
+        {
+            poseFile << poseDataInitial[i] << " ";
+        }
+        poseFile << "\n";
+
+        // Write the final pose after convergence
+        poseFile << "Final pose:\n";
+        for (int i = 0; i < 168; ++i)
+        {
+            poseFile << poseDataCurrent[i] << " ";
+        }
+        poseFile << "\n";
+
+        poseFile.close();
+    }
+    else
+    {
+        std::cout << "Unable to open file: " << filename << std::endl;
+    }
+}
 
 ///
 /// \brief Load an .obj file
 ///
-void loadObjFile(const std::string &filename, std::vector<PxVec3>& vertices, std::vector <PxU32>& indices)
+void spineSimulator::loadObjFile(const std::string &filename, std::vector<PxVec3>& vertices, std::vector <PxU32>& indices)
 {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
@@ -180,7 +256,7 @@ void loadObjFile(const std::string &filename, std::vector<PxVec3>& vertices, std
 ///
 /// \brief Compute the half lengths given the vertices of the box
 ///
-PxVec3 computeBoxHalfLengths(const std::vector<PxVec3>& vertices)
+PxVec3 spineSimulator::computeBoxHalfLengths(const std::vector<PxVec3>& vertices)
 {
     PxReal x = (vertices[1] - vertices[6]).magnitude()*0.5;
     PxReal y = (vertices[0] - vertices[1]).magnitude()*0.5;
@@ -192,9 +268,9 @@ PxVec3 computeBoxHalfLengths(const std::vector<PxVec3>& vertices)
 ///
 /// \brief Compute the transform given the transformed box
 ///
-PxTransform computeTransformOfBox(const std::vector<PxVec3>& vertices, 
+PxTransform spineSimulator::computeTransformOfBox(const std::vector<PxVec3>& vertices,
                                   const std::vector <PxU32>& indices, 
-                                  const bool includeTranslaton = true)
+                                  const bool includeTranslaton /*= true*/)
 {
     // computer translation
     PxVec3 center(0., 0., 0.);
@@ -223,7 +299,7 @@ PxTransform computeTransformOfBox(const std::vector<PxVec3>& vertices,
 ///
 /// \brief Create a dynamic actor and add it to the scene
 ///
-PxRigidDynamic* createDynamic(const PxTransform& t, const PxGeometry& geometry, const PxVec3& velocity = PxVec3(0))
+PxRigidDynamic* spineSimulator::createDynamic(const PxTransform& t, const PxGeometry& geometry, const PxVec3& velocity /*= PxVec3(0)*/)
 {
 	PxRigidDynamic* dynamic = PxCreateDynamic(*gPhysics, t, geometry, *gMaterial, 10.0f);
 	dynamic->setAngularDamping(0.5f);
@@ -235,7 +311,7 @@ PxRigidDynamic* createDynamic(const PxTransform& t, const PxGeometry& geometry, 
 ///
 /// \brief D6 joint with a spring maintaining its position angle limits are in degrees
 ///
-PxJoint* createDampedD6(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a1, 
+PxJoint* spineSimulator::createDampedD6(PxRigidActor* a0, const PxTransform& t0, PxRigidActor* a1,
                         const PxTransform& t1, const float limX, const float limY, const float limZ)
 {
     PxD6Joint* j = PxD6JointCreate(*gPhysics, a0, t0, a1, t1);
@@ -257,7 +333,7 @@ typedef PxJoint* (*JointCreateFunction)(PxRigidActor* a0, const PxTransform& t0,
 ///
 /// \brief create a spine model with custom D6 links between the vertebrae
 ///
-void createRealSpineModel(PxTransform& offset)
+void spineSimulator::createRealSpineModel(PxTransform& offset)
 {
     const PxU32 length = 24;
     std::vector<PxTransform> vertebraeTransforms;
@@ -319,43 +395,40 @@ void createRealSpineModel(PxTransform& offset)
                    xAngularLimits[length - 2], yAngularLimits[length - 2], zAngularLimits[length - 2]);
 }
 
-///
-/// \brief Initialize the physics
-///
-void initPhysics(bool /*interactive*/)
+spineSimulator::spineSimulator()
 {
-	gFoundation = PxCreateFoundation(PX_PHYSICS_VERSION, gAllocator, gErrorCallback);
+    gFoundation = PxCreateFoundation(PX_PHYSICS_VERSION, gAllocator, gErrorCallback);
     REPORT_INIT_ERROR_IFANY(gFoundation, gErrorCallback, "PxCreateFoundation failed!!")
 
-	gPvd = PxCreatePvd(*gFoundation);
-	PxPvdTransport* transport = PxDefaultPvdSocketTransportCreate(PVD_HOST, 5425, 10);
-	gPvd->connect(*transport,PxPvdInstrumentationFlag::eALL);
+    gPvd = PxCreatePvd(*gFoundation);
+    PxPvdTransport* transport = PxDefaultPvdSocketTransportCreate(PVD_HOST, 5425, 10);
+    gPvd->connect(*transport, PxPvdInstrumentationFlag::eALL);
 
-	gPhysics = PxCreatePhysics(PX_PHYSICS_VERSION, *gFoundation, PxTolerancesScale(),true, gPvd);
+    gPhysics = PxCreatePhysics(PX_PHYSICS_VERSION, *gFoundation, PxTolerancesScale(), true, gPvd);
     REPORT_INIT_ERROR_IFANY(gPhysics, gErrorCallback, "PxCreatePhysics failed!!")
 
-	PxInitExtensions(*gPhysics, gPvd);
+    PxInitExtensions(*gPhysics, gPvd);
 
     gCooking = PxCreateCooking(PX_PHYSICS_VERSION, *gFoundation, PxCookingParams(PxTolerancesScale()));
     REPORT_INIT_ERROR_IFANY(gCooking, gErrorCallback, "PxCreateCooking failed!!")
 
-	PxSceneDesc sceneDesc(gPhysics->getTolerancesScale());
+    PxSceneDesc sceneDesc(gPhysics->getTolerancesScale());
     sceneDesc.gravity = PxVec3(0.0f, -9.81f, 0.0f);
-	gDispatcher = PxDefaultCpuDispatcherCreate(2);
-	sceneDesc.cpuDispatcher	= gDispatcher;
-	sceneDesc.filterShader	= PxDefaultSimulationFilterShader;
-	gScene = gPhysics->createScene(sceneDesc);
+    gDispatcher = PxDefaultCpuDispatcherCreate(2);
+    sceneDesc.cpuDispatcher = gDispatcher;
+    sceneDesc.filterShader = PxDefaultSimulationFilterShader;
+    gScene = gPhysics->createScene(sceneDesc);
     gScene->setVisualizationParameter(PxVisualizationParameter::eACTOR_AXES, 40.0f);
 
-	PxPvdSceneClient* pvdClient = gScene->getScenePvdClient();
-	if(pvdClient)
-	{
-		pvdClient->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_CONSTRAINTS, true);
-		pvdClient->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_CONTACTS, true);
+    PxPvdSceneClient* pvdClient = gScene->getScenePvdClient();
+    if (pvdClient)
+    {
+        pvdClient->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_CONSTRAINTS, true);
+        pvdClient->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_CONTACTS, true);
         pvdClient->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_SCENEQUERIES, true);
-	}
+    }
 
-	gMaterial = gPhysics->createMaterial(0.5f, 0.5f, 0.6f);
+    gMaterial = gPhysics->createMaterial(0.5f, 0.5f, 0.6f);
 
     if (includeGroundPlane)
     {
@@ -364,16 +437,34 @@ void initPhysics(bool /*interactive*/)
     }
 
     // Create a spine model
-    createRealSpineModel(PxTransform(PxVec3(0.0f, 40.0f, 0.0f)));   
+    createRealSpineModel(PxTransform(PxVec3(0.0f, 40.0f, 0.0f)));
+
+    printf("Spine initialized!\n");
 
     // add sample force
-    addForceOnVertebrae(10, PxVec3(-1.2e2f, 0.0f, 0.0f), PxVec3(0.f, 0.f, 0.f));
+    //addForceOnVertebrae(10, PxVec3(-1.2e2f, 0.0f, 0.0f), PxVec3(0.f, 0.f, 0.f));
+}
+
+spineSimulator::~spineSimulator()
+{
+    PX_RELEASE(gScene);
+    PX_RELEASE(gDispatcher);
+    PxCloseExtensions();
+    PX_RELEASE(gPhysics);
+    PX_RELEASE(gCooking);
+    if (gPvd)
+    {
+        PxPvdTransport* transport = gPvd->getTransport();
+        gPvd->release();	gPvd = NULL;
+        PX_RELEASE(transport);
+    }
+    PX_RELEASE(gFoundation);
 }
 
 ///
 /// \brief Get the pose of all the 24 vertebrae
 ///
-void getSpinePose(float* poseData)
+void spineSimulator::getSpinePose(float* poseData)
 {
     unsigned int count = 0;
     for (const auto& v : vertebrae)
@@ -393,7 +484,7 @@ void getSpinePose(float* poseData)
 ///
 /// \brief Set the time step size
 ///
-void setTimeStepSize(const float timeStep)
+void spineSimulator::setTimeStepSize(const float timeStep)
 {
     timeStepSize = timeStep;
 }
@@ -401,7 +492,7 @@ void setTimeStepSize(const float timeStep)
 ///
 /// \brief Check if the spine pose has converged with a preset tolerance
 ///
-bool poseConverged()
+bool spineSimulator::poseConverged()
 {
     getSpinePose(poseDataCurrent);
 
@@ -432,7 +523,7 @@ bool poseConverged()
 /// \param force force to be applied on the vertebrae
 /// \param force Position w.r.t local vertebrae frame where the force will be applied
 ///
-void addForceOnVertebrae(const unsigned int vertebraeNum, const PxVec3& force, const PxVec3& pos)
+void spineSimulator::addForceOnVertebrae(const unsigned int vertebraeNum, const PxVec3& force, const PxVec3& pos)
 {
     if (vertebraeNum > 23)
     {
@@ -442,7 +533,7 @@ void addForceOnVertebrae(const unsigned int vertebraeNum, const PxVec3& force, c
     vertebraeForces.push_back(vertebraeForce(vertebraeNum, force, pos));
 }
 
-void addForceOnVertebrae(const unsigned int vertebraeNum, 
+void spineSimulator::addForceOnVertebrae(const unsigned int vertebraeNum,
                          const float fX, const float fY, const float fZ,
                          const float pX, const float pY, const float pZ)
 {
@@ -452,7 +543,7 @@ void addForceOnVertebrae(const unsigned int vertebraeNum,
 ///
 /// \brief Clear all the forces on all the vertebrae
 ///
-void clearAllForces()
+void spineSimulator::clearAllForces()
 {
     vertebraeForces.clear();
 }
@@ -461,7 +552,7 @@ void clearAllForces()
 /// \brief Remove all the forces on a certain vertebrae
 /// \param vertebraeNum vertebrae number [0, 23]
 ///
-void removeForcesOnVertebrae(const unsigned int vertebraeNum)
+void spineSimulator::removeForcesOnVertebrae(const unsigned int vertebraeNum)
 {
     if (vertebraeNum > 23)
     {
@@ -478,7 +569,7 @@ void removeForcesOnVertebrae(const unsigned int vertebraeNum)
 ///
 /// \brief Apply the all the specified forces
 ///
-void applyForces()
+void spineSimulator::applyForces()
 {
     for (const auto& f : vertebraeForces)
     {
@@ -489,7 +580,7 @@ void applyForces()
 ///
 /// \brief Returns the simulation state
 ///
-spineSimulationState getSimulationState()
+spineSimulationState spineSimulator::getSimulationState()
 {
     return simState;
 }
@@ -497,88 +588,179 @@ spineSimulationState getSimulationState()
 ///
 /// \brief Step one physics frame
 ///
-void stepPhysics(bool /*interactive*/)
+void spineSimulator::stepPhysics()
 {
+    if (paused)
+    {
+        return;
+    }
+
     if (firstIteration)
     {
         simState = spineSimulationState::movingToDefaultPose;
     }
 
-    if (!paused)
-    {
-        if (frameCount > 2000)
-        {        
-            applyForces();
-        }        
-        frameCount++;
-    }
+    if (frameCount > 2000)
+    {        
+        applyForces();
+    }  
 
     if (frameCount > 3000 && simState == spineSimulationState::movingToDefaultPose)
-    {
+    {        
+        getSpinePose(poseDataInitial);
         simState = spineSimulationState::movingToTargetPose;
     }
 
-    if (frameCount > 3000 && !firstIteration && !paused && poseConverged())
+    if (frameCount > 3000 && !firstIteration && poseConverged())
     {
         paused = true;
-        simState = spineSimulationState::ConvergedToTargetPose;
-        printf("Converged!\n");
+        simState = spineSimulationState::ConvergedToTargetPose;        
     }
 
-    if (!paused)
-    {
-        gScene->simulate(timeStepSize);
-        gScene->fetchResults(true);
+    frameCount++;
+    gScene->simulate(timeStepSize);
+    gScene->fetchResults(true);
 
-        firstIteration = false;
-    }
+    firstIteration = false;
 }
 
-///
-/// \brief Clean up
-///
-void cleanupPhysics(bool /*interactive*/)
+#ifdef RENDER_SPINE
+
+Snippets::Camera*	sCamera;
+unsigned int stepNum = 0;
+
+void motionCallback(int x, int y)
 {
-	PX_RELEASE(gScene);
-	PX_RELEASE(gDispatcher);
-	PxCloseExtensions();
-	PX_RELEASE(gPhysics);
-    PX_RELEASE(gCooking);
-	if(gPvd)
-	{
-		PxPvdTransport* transport = gPvd->getTransport();
-		gPvd->release();	gPvd = NULL;
-		PX_RELEASE(transport);
-	}
-	PX_RELEASE(gFoundation);
+    sCamera->handleMotion(x, y);
 }
 
-///
-/// \brief Handle key presses
-///
 void keyPress(unsigned char key, const PxTransform& camera)
 {
-	switch(toupper(key))
-	{
+    switch (toupper(key))
+    {
     case ' ':
-        paused = !paused;
+        spine->setPause(spine->isPaused() ? false : true);
         break;
-	}
+    }
 }
+
+void keyboardCallback(unsigned char key, int x, int y)
+{
+    if (key == 27)
+        exit(0);
+
+    if (!sCamera->handleKey(key, x, y))
+        keyPress(key, sCamera->getTransform());
+}
+
+void mouseCallback(int button, int state, int x, int y)
+{
+    sCamera->handleMouse(button, state, x, y);
+}
+
+void idleCallback()
+{
+    glutPostRedisplay();
+}
+
+void renderCallback()
+{
+    if (spine->getSimulationState() != spineSimulationState::ConvergedToTargetPose)
+    {
+        spine->stepPhysics();
+        printf("\rSimulation step: %d", spine->getFrameNum());
+    }
+    else
+    {
+        fflush(stdout);
+        printf("\nSimulation converged!");
+        exit(0);
+    }
+
+    Snippets::startRender(sCamera->getEye(), sCamera->getDir());
+
+    PxScene* scene;
+    PxGetPhysics().getScenes(&scene, 1);
+    PxU32 nbActors = scene->getNbActors(PxActorTypeFlag::eRIGID_DYNAMIC | PxActorTypeFlag::eRIGID_STATIC);
+    if (nbActors)
+    {
+        std::vector<PxRigidActor*> actors(nbActors);
+        scene->getActors(PxActorTypeFlag::eRIGID_DYNAMIC | PxActorTypeFlag::eRIGID_STATIC, reinterpret_cast<PxActor**>(&actors[0]), nbActors);
+        Snippets::renderActors(&actors[0], static_cast<PxU32>(actors.size()), true, physx::PxVec3(0.95f, 0.95f, 0.0f));
+    }
+
+    Snippets::finishRender();
+}
+
+void exitCallback(void)
+{    
+    printf("\nWriting target pose");
+    spine->writeSpinePose(spinePoseFilename);
+    printf("..Done\n");
+
+    delete spine;
+    delete sCamera;
+
+    printf("\nPress any key to exit!");
+    getchar();
+}
+
+void renderLoop()
+{
+    spine = new spineSimulator();
+
+    // add forces
+    spine->addForceOnVertebrae(10, PxVec3(-1.2e2f, 0.0f, 0.0f), PxVec3(0.f, 0.f, 0.f));
+
+    sCamera = new Snippets::Camera(PxVec3(90.0f, 90.0f, 90.0f), PxVec3(-0.6f, -0.2f, -0.7f));
+
+    Snippets::setupDefaultWindow("Spine simulation");
+    Snippets::setupDefaultRenderState();
+
+    glutIdleFunc(idleCallback);
+    glutDisplayFunc(renderCallback);
+    glutKeyboardFunc(keyboardCallback);
+    glutMouseFunc(mouseCallback);
+    glutMotionFunc(motionCallback);
+    motionCallback(0, 0);
+
+    atexit(exitCallback);
+    glutMainLoop();
+}
+
+#endif  // RENDER_SPINE
 
 int snippetMain(int, const char*const*)
 {
-#ifdef RENDER_SNIPPET
+   
+#ifdef RENDER_SPINE    
 	extern void renderLoop();
 	renderLoop();
-#else	
-	initPhysics(false);
-    while (1)
-    {
-        stepPhysics(false);
-    }		
-	cleanupPhysics(false);
-#endif
+#else
+    
+    spineSimulator* spine = new spineSimulator();
 
+    // add forces
+    spine->addForceOnVertebrae(10, PxVec3(-1.2e2f, 0.0f, 0.0f), PxVec3(0.f, 0.f, 0.f));
+
+    // Simulate until convergence
+    unsigned int stepNum = 0;
+    while (spine->getSimulationState() != spineSimulationState::ConvergedToTargetPose)
+    {
+        spine->stepPhysics(); 
+        printf("\rSimulation step: %d", spine->getFrameNum());
+    }
+
+    // Write target pose
+    fflush(stdout);
+    printf("\nSimulation converged!\nWriting target pose");    
+    spine->writeSpinePose(spinePoseFilename);
+    printf("..Done\n");
+    
+    delete spine;
+    
+    printf("\nPress any key to exit!");
+    getchar();
+#endif    
 	return 0;
 }
